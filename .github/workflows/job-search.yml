@@ -1,0 +1,43 @@
+name: Job Search Automation
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # Runs daily at 13:00 UTC
+  workflow_dispatch:       # Allows manual run from GitHub UI
+
+jobs:
+  run-job-search:
+
+    runs-on: ubuntu-latest
+
+    env:
+      RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Run job search script
+        run: |
+          python job_search.py --role "QA Manager" --location "Remote,Austin TX"
+
+      - name: Commit updated reports
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git add reports/*
+
+          git commit -m "Automated job search report update" || echo "No changes"
+
+          git push
