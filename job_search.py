@@ -3,13 +3,15 @@ import csv
 import html
 import argparse
 import requests
-import webbrowser
 import pathlib
 from datetime import datetime
+from dotenv import load_dotenv
 
 # ------------------------------------------------
-# CONFIG
+# LOAD ENVIRONMENT
 # ------------------------------------------------
+
+load_dotenv()
 
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 
@@ -17,7 +19,13 @@ if not RAPIDAPI_KEY:
     print("ERROR: RAPIDAPI_KEY environment variable not set")
     exit()
 
+# ------------------------------------------------
+# CONFIG
+# ------------------------------------------------
+
 REPORT_DIR = "reports"
+PREVIOUS_FILE = "previous_jobs.csv"
+
 os.makedirs(REPORT_DIR, exist_ok=True)
 
 session = requests.Session()
@@ -41,7 +49,6 @@ ROLE_EXPANSION = {
     "qe manager": MANAGER_ROLES
 }
 
-
 def expand_roles(role):
 
     role_key = role.lower().strip()
@@ -52,7 +59,6 @@ def expand_roles(role):
         return roles
 
     return [role]
-
 
 # ------------------------------------------------
 # CLI INPUT
@@ -69,13 +75,12 @@ parser.add_argument(
 parser.add_argument(
     "--location",
     default="Remote",
-    help="Location (example: Remote or Austin TX)"
+    help="Comma separated locations (example: Remote,Austin TX)"
 )
 
 args = parser.parse_args()
 
 base_role = args.role.strip()
-###location = args.location.strip() - Remove me it this change works
 locations = [l.strip() for l in args.location.split(",")]
 
 roles = expand_roles(base_role)
@@ -84,11 +89,27 @@ print("\nSearching roles:")
 for r in roles:
     print(" ", r)
 
-jobs = []
+# ------------------------------------------------
+# LOAD PREVIOUS JOBS
+# ------------------------------------------------
+
+previous_jobs = set()
+
+if os.path.exists(PREVIOUS_FILE):
+
+    with open(PREVIOUS_FILE, newline="", encoding="utf8") as f:
+
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            key = row["Title"] + row["Company"]
+            previous_jobs.add(key)
 
 # ------------------------------------------------
-# JSEARCH (LinkedIn / Indeed / ZipRecruiter)
+# COLLECT JOBS
 # ------------------------------------------------
+
+jobs = []
 
 url = "https://jsearch.p.rapidapi.com/search"
 
@@ -99,6 +120,7 @@ headers = {
 
 for search_role in roles:
     for location in locations:
+
         params = {
             "query": f"{search_role} in {location}",
             "num_pages": "3"
@@ -112,11 +134,11 @@ for search_role in roles:
 
             results = data.get("data", [])
 
-            print(f"JSearch {search_role}: {len(results)} jobs")
+            print(f"JSearch {search_role} ({location}): {len(results)} jobs")
 
             for j in results:
 
-                jobs.append({
+                job = {
                     "title": j.get("job_title",""),
                     "company": j.get("employer_name",""),
                     "city": j.get("job_city",""),
@@ -124,101 +146,16 @@ for search_role in roles:
                     "source": j.get("job_publisher",""),
                     "posted": j.get("job_posted_at_datetime_utc"),
                     "url": j.get("job_apply_link","")
-                })
+                }
+
+                key = job["title"] + job["company"]
+
+                job["is_new"] = key not in previous_jobs
+
+                jobs.append(job)
 
         except Exception as e:
             print("JSearch error:", e)
-
-
-# ------------------------------------------------
-# GREENHOUSE JOB BOARDS
-# ------------------------------------------------
-
-try:
-
-    boards = session.get(
-        "https://boards-api.greenhouse.io/v1/boards",
-        timeout=30
-    ).json().get("boards",[])
-
-    for board in boards[:100]:
-
-        token = board.get("token")
-
-        try:
-
-            r = session.get(
-                f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs",
-                timeout=30
-            )
-
-            data = r.json().get("jobs",[])
-
-            for job in data:
-
-                title = job.get("title","").lower()
-
-                if not any(word in title for role in roles for word in role.lower().split()):
-                    continue
-
-                location_data = job.get("location",{}).get("name","")
-
-                jobs.append({
-                    "title": job.get("title",""),
-                    "company": board.get("name",""),
-                    "city": location_data,
-                    "state": "",
-                    "source": "Greenhouse",
-                    "posted": "",
-                    "url": job.get("absolute_url","")
-                })
-
-        except:
-            continue
-
-    print("Greenhouse scan complete")
-
-except Exception as e:
-    print("Greenhouse error:", e)
-
-
-# ------------------------------------------------
-# LEVER JOB BOARDS
-# ------------------------------------------------
-
-try:
-
-    lever_data = session.get(
-        "https://api.lever.co/v0/postings",
-        timeout=30
-    ).json()
-
-    for job in lever_data:
-
-        title = job.get("text","").lower()
-
-        if not any(word in title for role in roles for word in role.lower().split()):
-            continue
-
-        location_data = job.get("categories",{}).get("location","")
-
-        jobs.append({
-            "title": job.get("text",""),
-            "company": job.get("company",""),
-            "city": location_data,
-            "state": "",
-            "source": "Lever",
-            "posted": "",
-            "url": job.get("hostedUrl","")
-        })
-
-    print("Lever scan complete")
-
-except Exception as e:
-    print("Lever error:", e)
-
-
-print("\nTotal jobs collected:", len(jobs))
 
 # ------------------------------------------------
 # DEDUPLICATION
@@ -237,8 +174,7 @@ for job in jobs:
 
 jobs = unique
 
-print("Unique jobs:", len(jobs))
-
+print("\nUnique jobs:", len(jobs))
 
 # ------------------------------------------------
 # SORT BY DATE
@@ -250,7 +186,7 @@ jobs.sort(
 )
 
 # ------------------------------------------------
-# HTML REPORT
+# BUILD HTML ROWS
 # ------------------------------------------------
 
 rows = ""
@@ -262,8 +198,10 @@ for job in jobs:
 
     location_display = ", ".join(filter(None,[job["city"],job["state"]]))
 
+    row_style = " style='background-color:#d4f7d4'" if job.get("is_new") else ""
+
     rows += f"""
-<tr>
+<tr{row_style}>
 <td>{html.escape(job['title'])}</td>
 <td>{html.escape(job['company'])}</td>
 <td>{location_display}</td>
@@ -273,15 +211,25 @@ for job in jobs:
 </tr>
 """
 
+# ------------------------------------------------
+# BUILD HTML REPORT
+# ------------------------------------------------
+
+new_count = sum(1 for j in jobs if j.get("is_new"))
+
 html_doc = f"""
 <html>
 <body>
+
 <h2>QA Leadership Job Search Report</h2>
+
 <p>Total Jobs Found: {len(jobs)}</p>
+<p>New Jobs Since Last Run: {new_count}</p>
 <p>Search Role: {base_role}</p>
-<p>Location: {",".join(locations)}</p>
+<p>Locations: {", ".join(locations)}</p>
 
 <table border=1 cellpadding="6" cellspacing="0">
+
 <tr>
 <th>Title</th>
 <th>Company</th>
@@ -290,8 +238,11 @@ html_doc = f"""
 <th>Posted</th>
 <th>Link</th>
 </tr>
+
 {rows}
+
 </table>
+
 </body>
 </html>
 """
@@ -337,11 +288,17 @@ print("\nReport written:", filename)
 print("CSV export:", csvfile)
 
 # ------------------------------------------------
-# OPEN REPORT
+# SAVE CURRENT JOBS FOR NEXT RUN
 # ------------------------------------------------
 
-path = pathlib.Path(filename).resolve()
+with open(PREVIOUS_FILE, "w", newline="", encoding="utf8") as f:
 
-webbrowser.open(path.as_uri())
+    writer = csv.writer(f)
 
-print(f'\nReports available at: {path}')
+    writer.writerow(["Title", "Company"])
+
+    for job in jobs:
+        writer.writerow([job["title"], job["company"]])
+
+print("Saved job history for next run.")
+print("\n\n\nScript execution completed!")

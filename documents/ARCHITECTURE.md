@@ -1,540 +1,203 @@
-Job Search Automation Tool
-System Architecture & Design Document
+Job Search Automation Architecture
 
-Author: Ron Gonzalez
-Purpose: Automated job discovery, filtering, ranking, and reporting.
+This document describes the architecture and data flow of the Job Search Automation system.
 
-1. System Overview
+Overview
 
-The Job Search Automation Tool is a Python-based automation system that searches multiple job boards, aggregates results, filters them based on user criteria, ranks results by relevance, and generates reports.
+The system collects job postings from multiple sources, aggregates them, and generates reports highlighting newly discovered jobs.
 
-The system is designed to support automated job discovery workflows while demonstrating modern automation engineering practices including:
+Automation is handled via GitHub Actions, allowing the system to run on a schedule.
 
-modular architecture
-
-concurrent API execution
-
-extensible source providers
-
-automated filtering
-
-data persistence
-
-AI-assisted ranking
-
-scheduled automation
-
-2. High-Level System Architecture
-flowchart TD
-
-A[User Runs Script] --> B[Input Collection]
-
-B --> C[Search Controller]
-
-C --> D1[RemoteOK Source]
-C --> D2[JSearch API Source]
-C --> D3[Arbeitnow Source]
-
-D1 --> E[Job Results]
-D2 --> E
-D3 --> E
-
-E --> F[Result Aggregation]
-
-F --> G[Deduplication Engine]
-
-G --> H[Filtering Layer]
-
-H --> H1[Keyword Matching]
-H --> H2[Location Filter]
-H --> H3[Work Environment Filter]
-H --> H4[Job Type Filter]
-H --> H5[Date Filter (Last 48 Hours)]
-
-H5 --> I[Relevance Scoring Engine]
-
-I --> J[Final Job List]
-
-J --> K[Terminal Table Output]
-
-J --> L[HTML Report Generator]
-
-L --> M[Browser View]
-
-J --> N[(SQLite Job Database)]
-3. System Components
-3.1 Main Controller
-
-Entry point: main() function.
+System Components
+Job Search Script
+job_search.py
 
 Responsibilities:
 
-Collect user input
+Accept command line arguments
 
-Initialize search parameters
+Expand leadership role variations
 
-Trigger multi-source job searches
-
-Apply filtering and ranking
-
-Generate output reports
-
-Input order:
-
-Job Description(s)
-
-Job Location
-
-Work Environment (remote / hybrid / onsite)
-
-Job Type (full-time / contract / part-time)
-
-4. Source Provider Architecture
-
-The system uses a provider-based architecture.
-
-Each job board is implemented as a subclass of JobSource.
-
-class JobSource:
-    def search(self, keyword, location):
-        pass
-
-Providers return normalized job objects.
-
-Example structure:
-
-{
- title,
- company,
- location,
- url,
- source,
- posted
-}
-5. Job Data Sources
-RemoteOK Provider
-
-API:
-https://remoteok.com/api
-
-Characteristics:
-
-Remote-first job board
-
-Free public API
-
-No authentication required
-
-JSearch Provider
-
-API aggregator via RapidAPI.
-
-Aggregates results from:
-
-LinkedIn
-
-Indeed
-
-ZipRecruiter
-
-Glassdoor
-
-Authentication required:
-
-RAPIDAPI_KEY
-Arbeitnow Provider
-
-API:
-
-https://www.arbeitnow.com/api/job-board-api
-
-Focus:
-
-tech jobs
-
-startup jobs
-
-6. Parallel Search Execution
-
-The system uses concurrent execution.
-
-Technology:
-
-ThreadPoolExecutor
-
-Purpose:
-
-Run API calls simultaneously
-
-Reduce overall search time
-
-Avoid blocking operations
-
-Execution model:
-
-Search Controller
-   ├── RemoteOK Search
-   ├── JSearch API Search
-   └── Arbeitnow Search
-7. Result Aggregation
-
-Results from all providers are merged into a unified list.
-
-Key steps:
-
-Collect results from each provider
+Query external job APIs
 
 Normalize job data
 
-Aggregate results
+Remove duplicates
 
-8. Deduplication Engine
+Detect newly discovered jobs
 
-Duplicate jobs are removed using unique identifiers.
+Generate reports
 
-Primary key:
+External Data Sources
 
-job URL
+The system integrates with multiple job platforms.
 
-Fallback key:
+JSearch API
+
+Primary job search API used to retrieve job postings.
+
+Capabilities:
+
+Multi-location search
+
+Keyword matching
+
+Pagination
+
+Greenhouse Job Boards
+
+Scans public Greenhouse job boards for matching roles.
+
+Lever Job Boards
+
+Scans Lever-hosted job postings.
+
+Data Processing Pipeline
+User Input
+   ↓
+Role Expansion
+   ↓
+API Queries
+   ↓
+Job Aggregation
+   ↓
+Deduplication
+   ↓
+New Job Detection
+   ↓
+Report Generation
+Job Aggregation
+
+Jobs from multiple sources are normalized into a common structure:
+
+{
+  title
+  company
+  city
+  state
+  source
+  posted
+  url
+}
+Duplicate Removal
+
+Duplicates are identified using:
 
 title + company
 
-This ensures identical listings across multiple job boards appear only once.
+Only unique jobs are retained.
 
-9. Filtering Engine
+New Job Detection
 
-After aggregation, results pass through the filtering layer.
+Each run compares current results against a stored history file.
 
-Keyword Matching
-
-Phrase-first matching prevents partial matches.
-
-Example:
-
-Quality Engineering Manager
-
-will not return unrelated titles such as:
-
-Account Manager
-Engineering Representative
-Location Filtering
-
-Matches jobs based on user-provided location.
-
-Example:
-
-Texas
-Austin
-Remote
-Work Environment Filtering
-
-Supported values:
-
-remote
-
-hybrid
-
-onsite
-
-Job Type Filtering
-
-Supported values:
-
-full-time
-
-contract
-
-part-time
-
-Date Filtering
-
-Jobs are limited to those posted within the last 48 hours.
+previous_jobs.csv
 
 Logic:
 
-datetime.now() - timedelta(days=2)
-10. AI Relevance Scoring Engine
+if job not in previous run
+    mark as NEW
 
-After filtering, jobs are ranked using a scoring algorithm.
+New jobs are highlighted in reports.
 
-Purpose:
+Report Generation
 
-prioritize the most relevant job listings
-
-surface leadership roles
-
-improve result quality
-
-Example scoring factors:
-
-Factor	Points
-Keyword match	+5
-Manager role	+3
-Director role	+2
-Location match	+2
-
-Example scoring function:
-
-def score_job(job, keywords):
-
-    score = 0
-    text = f"{job['title']} {job['company']} {job['location']}".lower()
-
-    for keyword in keywords:
-        if keyword.lower() in text:
-            score += 5
-
-    if "manager" in text:
-        score += 3
-
-    if "director" in text:
-        score += 2
-
-    return score
-
-Jobs are sorted by score.
-
-11. Data Persistence Layer
-
-The system supports persistent job storage using SQLite.
-
-Purpose:
-
-track historical job discoveries
-
-prevent duplicate listings across runs
-
-track application status
-
-Database file:
-
-jobs.db
-
-Schema:
-
-CREATE TABLE jobs (
- id INTEGER PRIMARY KEY AUTOINCREMENT,
- title TEXT,
- company TEXT,
- location TEXT,
- source TEXT,
- url TEXT UNIQUE,
- posted_date TEXT,
- discovered_date TEXT,
- status TEXT DEFAULT 'new'
-);
-
-Status options:
-
-new
-
-applied
-
-interested
-
-rejected
-
-12. Output Layer
-
-The system generates two output formats.
-
-Terminal Display
-
-Uses the Rich Python library.
-
-Displays a formatted table including:
-
-Title
-
-Company
-
-Location
-
-Source
-
-Posted Date
+Two report formats are produced.
 
 HTML Report
 
-A timestamped HTML report is generated.
+Purpose:
 
-Example filename:
+Human readable
 
-jobs_20260312_093210.html
+highlights new jobs
 
-Report includes:
+clickable application links
 
-job title
-
-company
-
-location
-
-job source
-
-posted date
-
-apply link
-
-13. Scheduled Automation
-
-The tool can be scheduled to run automatically.
-
-Linux / Mac
-
-Using cron:
-
-0 8 * * * python3 job_search.py
-
-Runs daily at 8 AM.
-
-Windows
-
-Using Task Scheduler.
-
-Schedule daily execution of the script.
-
-14. Email Notification System
-
-The script can email job results automatically.
-
-Email includes:
-
-HTML report attachment
-
-job summary
-
-SMTP example:
-
-smtp.gmail.com
+CSV Export
 
 Purpose:
 
-deliver daily job search results
+Data analysis
 
-eliminate manual script execution
+spreadsheet processing
 
-15. Internal Python Architecture
-flowchart TD
+Persistence
 
-A[main()] --> B[Input Collection]
+The system stores previously seen jobs in:
 
-B --> C[search_jobs()]
+previous_jobs.csv
 
-C --> D[ThreadPoolExecutor]
+This file enables detection of new postings between runs.
 
-D --> E1[RemoteOK.search()]
-D --> E2[JSearch.search()]
-D --> E3[Arbeitnow.search()]
+GitHub Actions Automation
 
-E1 --> F[Normalized Job Objects]
-E2 --> F
-E3 --> F
+Automation is handled by:
 
-F --> G[Deduplication Engine]
+.github/workflows/job-search.yml
 
-G --> H[Filtering Engine]
+Workflow process:
 
-H --> H1[Keyword Matching]
-H --> H2[Location Filter]
-H --> H3[Environment Filter]
-H --> H4[Job Type Filter]
-H --> H5[Date Filter]
+Scheduler
+   ↓
+GitHub Runner
+   ↓
+Install Python
+   ↓
+Install Dependencies
+   ↓
+Run job_search.py
+   ↓
+Generate Reports
+   ↓
+Upload Artifacts
+   ↓
+Persist Job History
+Security
 
-H5 --> I[Relevance Scoring Engine]
+API credentials are stored securely using:
 
-I --> J[Final Job List]
-
-J --> K[Terminal Output]
-
-J --> L[HTML Report]
-
-J --> M[(SQLite Database)]
-16. Security Considerations
-
-API keys are managed via environment variables.
+GitHub Secrets
 
 Example:
 
-export RAPIDAPI_KEY="your_key"
+RAPIDAPI_KEY
 
-Benefits:
+Secrets are injected into the workflow environment.
 
-prevents credentials from being committed to source control
+Scalability
 
-improves deployment security
+The system is designed to support additional data sources.
 
-17. Performance Optimizations
-HTTP Connection Pooling
+Future integrations could include:
 
-Uses:
+LinkedIn scraping
 
-requests.Session()
+Indeed APIs
 
-Benefits:
+company career pages
 
-persistent connections
+Future Architecture Improvements
 
-faster API calls
+Potential enhancements include:
 
-Parallel Execution
+notification services (email or Slack)
 
-Multiple APIs run concurrently.
+job ranking based on skill match
 
-Benefits:
+AI summarization of job descriptions
 
-faster job retrieval
+dashboard interface
 
-reduced total search time
+database persistence
 
-18. Project Structure
+Summary
 
-Recommended repository layout:
+The project demonstrates a complete automation pipeline:
 
-job-search-automation/
+Data Collection
++ Data Processing
++ Report Generation
++ Scheduled Execution
 
-job_search.py
-README.md
-ARCHITECTURE.md
-requirements.txt
-
-database/
-    jobs.db
-
-reports/
-    jobs_YYYYMMDD.html
-
-diagrams/
-    architecture.png
-19. Future Enhancements
-
-Potential upgrades:
-
-AI job matching against resume
-
-job recommendation engine
-
-Slack / Teams notifications
-
-web dashboard
-
-job analytics
-
-historical trend analysis
-
-machine learning relevance ranking
-
-20. Target Use Cases
-
-This system supports:
-
-automated job discovery
-
-portfolio automation projects
-
-engineering architecture demonstrations
-
-QA / SDET leadership portfolio examples
-
-End of Document
+It showcases automation engineering concepts using Python and GitHub Actions.
